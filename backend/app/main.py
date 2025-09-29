@@ -16,6 +16,7 @@ from typing import List
 from app.config import settings
 from app.database import test_connection, get_db_info, get_table_info
 from app.routers import auth
+from app.routers import auth, marketing
 
 # Criar aplicação FastAPI com configurações do settings
 app = FastAPI(
@@ -38,6 +39,7 @@ app.add_middleware(
 
 # Registrar routers
 app.include_router(auth.router, prefix="/api")
+app.include_router(marketing.router, prefix="/api")
 
 # Gerenciador de conexões WebSocket
 class ConnectionManager:

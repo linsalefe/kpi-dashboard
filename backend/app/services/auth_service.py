@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from ..schemas import RoleEnum as UserRole
 
 # Ajuste de path para imports funcionarem tanto quando executado diretamente 
 # quanto quando importado como módulo
@@ -14,21 +13,12 @@ if __name__ == "__main__":
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from app.models import User
     from app.auth import verify_password, get_password_hash, create_access_token
-    from app.schemas import UserCreate, UserResponse
+    from app.schemas import UserCreate, UserResponse, RoleEnum
 else:
     # Quando importado como módulo (from app.services.auth_service import ...)
     from ..models import User
     from ..auth import verify_password, get_password_hash, create_access_token
-    from ..schemas import UserCreate, UserResponse
-
-
-class UserRole(str, Enum):
-    """
-    Enum para definir os papéis dos usuários no sistema - consistente com schemas.py
-    """
-    FUNCIONARIO = "Funcionário"  # ← CORRIGIR PARA ISSO
-    GESTOR = "Gestor"
-    DIRETOR = "Diretor"
+    from ..schemas import UserCreate, UserResponse, RoleEnum
 
 
 class AuthService:
@@ -38,6 +28,9 @@ class AuthService:
     - Login/logout
     - Verificação de permissões
     - Gerenciamento de roles
+    
+    IMPORTANTE: Usa RoleEnum do schemas.py para manter consistência:
+    - Funcionário, Gestor, Diretor (com acentuação correta)
     """
     
     def __init__(self, db: Session):
@@ -61,9 +54,9 @@ class AuthService:
         if existing_user:
             raise ValueError(f"Email {user_create.email} já está em uso")
         
-        # Valida role
-        if user_create.role not in [role.value for role in UserRole]:
-            raise ValueError(f"Role inválida: {user_create.role}. Opções: {[r.value for r in UserRole]}")
+        # Valida role usando RoleEnum do schemas.py
+        if user_create.role not in [role.value for role in RoleEnum]:
+            raise ValueError(f"Role inválida: {user_create.role}. Opções: {[r.value for r in RoleEnum]}")
         
         # Cria hash da senha
         hashed_password = get_password_hash(user_create.password)
@@ -72,10 +65,11 @@ class AuthService:
         db_user = User(
             email=user_create.email,
             nome=user_create.nome,
-            hashed_password=hashed_password,
+            password_hash=hashed_password,  # Campo correto do model
             role=user_create.role,
             setor=user_create.setor,
-            is_active=True,
+            cargo=user_create.cargo,
+            ativo=True,  # Campo correto do model
             created_at=datetime.utcnow()
         )
         
@@ -93,8 +87,8 @@ class AuthService:
                     "nome": db_user.nome,
                     "role": db_user.role,
                     "setor": db_user.setor,
-                    "is_active": db_user.is_active,
-                    "created_at": db_user.created_at
+                    "ativo": db_user.ativo,
+                    "created_at": db_user.created_at.isoformat() if db_user.created_at else None
                 }
             }
         except Exception as e:
@@ -116,14 +110,14 @@ class AuthService:
         if not user:
             return None
         
-        if not user.is_active:
+        if not user.ativo:  # Campo correto do model
             return None
         
-        if not verify_password(password, user.hashed_password):
+        if not verify_password(password, user.password_hash):
             return None
         
-        # Atualiza último login
-        user.last_login = datetime.utcnow()
+        # Atualiza último login (campo updated_at serve como proxy)
+        user.updated_at = datetime.utcnow()
         self.db.commit()
         
         return user
@@ -162,7 +156,7 @@ class AuthService:
                 "nome": user.nome,
                 "role": user.role,
                 "setor": user.setor,
-                "last_login": user.last_login
+                "updated_at": user.updated_at.isoformat() if user.updated_at else None
             }
         }
     
@@ -174,7 +168,7 @@ class AuthService:
         """Busca usuário por ID"""
         return self.db.query(User).filter(User.id == user_id).first()
     
-    def check_permission(self, user: User, required_role: UserRole) -> bool:
+    def check_permission(self, user: User, required_role: RoleEnum) -> bool:
         """
         Verifica se o usuário tem permissão para uma ação
         
@@ -183,18 +177,22 @@ class AuthService:
         - GESTOR: acesso ao seu setor + visualização de outros
         - FUNCIONARIO: acesso apenas ao seu setor
         """
-        user_role = UserRole(user.role)
+        try:
+            user_role = RoleEnum(user.role)
+        except ValueError:
+            # Se role do user não for válida, nega acesso
+            return False
         
         # Diretor tem acesso a tudo
-        if user_role == UserRole.DIRETOR:
+        if user_role == RoleEnum.DIRETOR:
             return True
         
         # Gestor pode fazer ações de gestor e funcionário
-        if user_role == UserRole.GESTOR and required_role in [UserRole.GESTOR, UserRole.FUNCIONARIO]:
+        if user_role == RoleEnum.GESTOR and required_role in [RoleEnum.GESTOR, RoleEnum.FUNCIONARIO]:
             return True
         
         # Funcionário só pode fazer ações de funcionário
-        if user_role == UserRole.FUNCIONARIO and required_role == UserRole.FUNCIONARIO:
+        if user_role == RoleEnum.FUNCIONARIO and required_role == RoleEnum.FUNCIONARIO:
             return True
         
         return False
@@ -203,18 +201,30 @@ class AuthService:
         """
         Verifica se o usuário pode acessar dados de um setor específico
         """
-        user_role = UserRole(user.role)
+        try:
+            user_role = RoleEnum(user.role)
+        except ValueError:
+            return False
         
         # Diretor acessa qualquer setor
-        if user_role == UserRole.DIRETOR:
+        if user_role == RoleEnum.DIRETOR:
             return True
         
-        # Outros roles só acessam o próprio setor
-        return user.setor.lower() == setor.lower()
+        # Gestor acessa qualquer setor (conforme regra de negócio)
+        if user_role == RoleEnum.GESTOR:
+            return True
+        
+        # Funcionário só acessa o próprio setor
+        return user.setor and user.setor.lower() == setor.lower()
     
     def create_admin_user(self) -> Dict[str, Any]:
         """
         Cria usuário administrador padrão se não existir
+        
+        Credenciais padrão:
+        - Email: admin@kpidashboard.com
+        - Senha: admin123
+        - Role: Diretor
         """
         admin_email = "admin@kpidashboard.com"
         existing_admin = self.get_user_by_email(admin_email)
@@ -223,19 +233,33 @@ class AuthService:
             return {
                 "status": "info",
                 "message": "Usuário administrador já existe",
-                "email": admin_email
+                "email": admin_email,
+                "user": {
+                    "id": existing_admin.id,
+                    "email": existing_admin.email,
+                    "nome": existing_admin.nome,
+                    "role": existing_admin.role,
+                    "ativo": existing_admin.ativo
+                }
             }
         
+        # Usa RoleEnum.DIRETOR.value para garantir o valor correto
         admin_user = UserCreate(
             email=admin_email,
             nome="Administrador",
             password="admin123",  # Senha padrão - MUDAR EM PRODUÇÃO
-            role=UserRole.DIRETOR.value,
-            setor="TI"
+            role=RoleEnum.DIRETOR,  # Pydantic aceita o enum diretamente
+            setor="TI",
+            cargo="Administrador do Sistema"
         )
         
         result = self.create_user(admin_user)
-        result["message"] = "Usuário administrador criado com sucesso. ATENÇÃO: Altere a senha padrão!"
+        result["message"] = "✅ Usuário administrador criado! ATENÇÃO: Altere a senha padrão 'admin123'!"
+        result["credentials"] = {
+            "email": admin_email,
+            "password": "admin123",
+            "warning": "Esta é a senha padrão. Altere imediatamente!"
+        }
         
         return result
     
@@ -244,13 +268,13 @@ class AuthService:
         Lista usuários (com base nas permissões do usuário solicitante)
         """
         # Verifica permissão
-        if not self.check_permission(user, UserRole.GESTOR):
+        if not self.check_permission(user, RoleEnum.GESTOR):
             raise ValueError("Permissão negada para listar usuários")
         
         query = self.db.query(User)
         
         # Se não for diretor, só mostra usuários do mesmo setor
-        if user.role != UserRole.DIRETOR.value:
+        if user.role != RoleEnum.DIRETOR.value:
             query = query.filter(User.setor == user.setor)
         
         users = query.offset(offset).limit(limit).all()
@@ -259,6 +283,8 @@ class AuthService:
         return {
             "status": "success",
             "total": total,
+            "page": offset // limit + 1 if limit > 0 else 1,
+            "per_page": limit,
             "users": [
                 {
                     "id": u.id,
@@ -266,9 +292,10 @@ class AuthService:
                     "nome": u.nome,
                     "role": u.role,
                     "setor": u.setor,
-                    "is_active": u.is_active,
-                    "created_at": u.created_at,
-                    "last_login": u.last_login
+                    "cargo": u.cargo,
+                    "ativo": u.ativo,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                    "updated_at": u.updated_at.isoformat() if u.updated_at else None
                 }
                 for u in users
             ]
@@ -279,7 +306,7 @@ class AuthService:
         Desativa um usuário (soft delete)
         """
         # Só diretor pode desativar usuários
-        if not self.check_permission(admin_user, UserRole.DIRETOR):
+        if not self.check_permission(admin_user, RoleEnum.DIRETOR):
             raise ValueError("Apenas diretores podem desativar usuários")
         
         user = self.get_user_by_id(user_id)
@@ -289,12 +316,18 @@ class AuthService:
         if user.id == admin_user.id:
             raise ValueError("Não é possível desativar o próprio usuário")
         
-        user.is_active = False
+        user.ativo = False  # Campo correto do model
+        user.updated_at = datetime.utcnow()
         self.db.commit()
         
         return {
             "status": "success",
-            "message": f"Usuário {user.email} desativado com sucesso"
+            "message": f"Usuário {user.email} desativado com sucesso",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "ativo": user.ativo
+            }
         }
 
 
@@ -315,7 +348,7 @@ def test_auth_service():
     
     # Testa importações
     print("✓ Importações OK")
-    print(f"✓ UserRole definido: {[r.value for r in UserRole]}")
+    print(f"✓ RoleEnum definido: {[r.value for r in RoleEnum]}")
     
     # Testa criação do serviço
     try:

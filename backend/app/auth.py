@@ -1,19 +1,17 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models import User
 from app.schemas import RoleEnum
 
-# Configuração de criptografia
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configuração de segurança
 security = HTTPBearer()
 
 # Constantes JWT
@@ -22,13 +20,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verificar se a senha em texto puro bate com o hash"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verificar se a senha em texto puro bate com o hash usando bcrypt direto"""
+    return bcrypt.checkpw(
+        plain_password.encode('utf-8'), 
+        hashed_password.encode('utf-8')
+    )
 
 
 def get_password_hash(password: str) -> str:
-    """Gerar hash da senha"""
-    return pwd_context.hash(password)
+    """Gerar hash da senha usando bcrypt direto"""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -40,14 +43,16 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=ALGORITHM)
+    # CORREÇÃO: usar settings.SECRET_KEY (não JWT_SECRET)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 
 def verify_token(token: str) -> Optional[dict]:
     """Verificar e decodificar token JWT"""
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[ALGORITHM])
+        # CORREÇÃO: usar settings.SECRET_KEY (não JWT_SECRET)
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             return None
@@ -56,15 +61,14 @@ def verify_token(token: str) -> Optional[dict]:
         return None
 
 
-async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
-    """Buscar usuário por email"""
-    result = await db.execute(select(User).where(User.email == email))
-    return result.scalar_one_or_none()
+def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    """Buscar usuário por email - VERSÃO SÍNCRONA"""
+    return db.query(User).filter(User.email == email).first()
 
 
-async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[User]:
-    """Autenticar usuário com email e senha"""
-    user = await get_user_by_email(db, email)
+def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
+    """Autenticar usuário com email e senha - VERSÃO SÍNCRONA"""
+    user = get_user_by_email(db, email)
     if not user:
         return None
     if not verify_password(password, user.password_hash):
@@ -74,11 +78,11 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
     return user
 
 
-async def get_current_user(
+def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ) -> User:
-    """Dependency para obter usuário atual do token JWT"""
+    """Dependency para obter usuário atual do token JWT - VERSÃO SÍNCRONA"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciais inválidas",
@@ -94,7 +98,7 @@ async def get_current_user(
     if email is None:
         raise credentials_exception
     
-    user = await get_user_by_email(db, email)
+    user = get_user_by_email(db, email)
     if user is None:
         raise credentials_exception
     
@@ -107,21 +111,29 @@ async def get_current_user(
     return user
 
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     """Dependency para usuário ativo (redundante, mas clara)"""
     return current_user
 
 
 def require_role(required_role: RoleEnum):
     """Factory para criar dependency que exige role específica"""
-    async def role_checker(current_user: User = Depends(get_current_user)) -> User:
+    def role_checker(current_user: User = Depends(get_current_user)) -> User:
         role_hierarchy = {
             RoleEnum.FUNCIONARIO: 1,
             RoleEnum.GESTOR: 2,
             RoleEnum.DIRETOR: 3
         }
         
-        user_level = role_hierarchy.get(current_user.role, 0)
+        try:
+            user_role = RoleEnum(current_user.role)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role do usuário inválida"
+            )
+        
+        user_level = role_hierarchy.get(user_role, 0)
         required_level = role_hierarchy.get(required_role, 999)
         
         if user_level < required_level:
@@ -146,17 +158,22 @@ def require_diretor():
 
 def can_access_setor(user: User, setor: str) -> bool:
     """Verificar se usuário pode acessar dados do setor"""
+    try:
+        user_role = RoleEnum(user.role)
+    except ValueError:
+        return False
+    
     # Diretor acessa tudo
-    if user.role == RoleEnum.DIRETOR:
+    if user_role == RoleEnum.DIRETOR:
         return True
     
     # Gestor acessa tudo também (assumindo que há gestores multi-setor)
-    if user.role == RoleEnum.GESTOR:
+    if user_role == RoleEnum.GESTOR:
         return True
     
     # Funcionário só acessa seu próprio setor
-    if user.role == RoleEnum.FUNCIONARIO:
-        return user.setor == setor
+    if user_role == RoleEnum.FUNCIONARIO:
+        return user.setor and user.setor.lower() == setor.lower()
     
     return False
 
@@ -167,7 +184,7 @@ class SetorAccessChecker:
     def __init__(self, setor: str):
         self.setor = setor
     
-    async def __call__(self, current_user: User = Depends(get_current_user)) -> User:
+    def __call__(self, current_user: User = Depends(get_current_user)) -> User:
         if not can_access_setor(current_user, self.setor):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

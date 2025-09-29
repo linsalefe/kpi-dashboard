@@ -6,8 +6,8 @@ from typing import Dict, Any
 from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
-from app.services.auth_service import AuthService, get_auth_service, UserRole
-from app.schemas import UserCreate, UserResponse
+from app.services.auth_service import AuthService, get_auth_service
+from app.schemas import UserCreate, UserResponse, RoleEnum
 from app.auth import get_current_user
 from app.models import User
 
@@ -37,7 +37,7 @@ async def register_user(
     - **email**: Email único do usuário
     - **nome**: Nome completo
     - **password**: Senha (mínimo 6 caracteres)
-    - **role**: Papel do usuário (funcionario, gestor, diretor)
+    - **role**: Papel do usuário (Funcionário, Gestor, Diretor)
     - **setor**: Setor de trabalho
     """
     auth_service = get_auth_service(db)
@@ -101,9 +101,10 @@ async def get_current_user_info(
         nome=current_user.nome,
         role=current_user.role,
         setor=current_user.setor,
-        is_active=current_user.is_active,
+        cargo=current_user.cargo,
+        ativo=current_user.ativo,
         created_at=current_user.created_at,
-        last_login=current_user.last_login
+        updated_at=current_user.updated_at
     )
 
 
@@ -241,8 +242,8 @@ async def check_user_permissions(
             "role": current_user.role,
             "setor": current_user.setor
         },
-        "can_manage_users": auth_service.check_permission(current_user, UserRole.GESTOR),
-        "can_deactivate_users": auth_service.check_permission(current_user, UserRole.DIRETOR),
+        "can_manage_users": auth_service.check_permission(current_user, RoleEnum.GESTOR),
+        "can_deactivate_users": auth_service.check_permission(current_user, RoleEnum.DIRETOR),
         "accessible_setores": {
             "marketing": auth_service.can_access_setor(current_user, "marketing"),
             "comercial": auth_service.can_access_setor(current_user, "comercial"),
@@ -267,7 +268,7 @@ async def auth_health_check():
     return {
         "status": "healthy",
         "service": "authentication",
-        "available_roles": [role.value for role in UserRole],
+        "available_roles": [role.value for role in RoleEnum],
         "endpoints": [
             "POST /auth/register",
             "POST /auth/login", 
