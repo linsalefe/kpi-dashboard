@@ -27,6 +27,7 @@ from app.schemas import (
     MarketingFilter
 )
 from app.auth import get_current_user, require_marketing_access
+from app.services.queue_service import queue_service
 
 # Configurar router
 router = APIRouter(
@@ -138,6 +139,18 @@ def create_marketing_data(
         dados_depois=data.model_dump()
     )
     db.commit()
+    
+    # Enfileirar job de cálculo de KPI (assíncrono)
+    try:
+        queue_service.add_kpi_job(
+            sector="marketing",
+            action="calculate",
+            data_id=db_data.id,
+            date_ref=str(db_data.data_ref),
+            user_id=current_user.id
+        )
+    except Exception as e:
+        print(f"⚠️ Erro ao enfileirar job: {e}")
     
     return db_data
 
