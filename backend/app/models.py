@@ -1,224 +1,161 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean, Text, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean, CheckConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from datetime import datetime, timezone
+from datetime import datetime
 
 Base = declarative_base()
 
-# Timezone para América/Fortaleza
-TIMEZONE = "America/Fortaleza"
-
 class User(Base):
-    """Usuários do sistema"""
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
     nome = Column(String(255), nullable=False)
     cargo = Column(String(100))
-    setor = Column(String(50))  # Marketing, Comercial, Eventos, RH, Pedagógico, Financeiro
-    role = Column(String(20), default="Funcionário")  # Funcionário, Gestor, Diretor
-    password_hash = Column(String(255), nullable=False)
-    ativo = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    setor = Column(String(50))
+    role = Column(String(20))
+    ativo = Column(Boolean, default=True)  # CORRIGIDO: era is_active
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class MarketingData(Base):
-    """Dados brutos de Marketing"""
     __tablename__ = "marketing_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False, comment="Data de referência do dado")
-    canal = Column(String(50), nullable=False)  # Facebook, Google, Instagram, etc.
-    campanha = Column(String(200), nullable=False)
-    investimento = Column(Float, nullable=False, comment="Valor sem símbolo R$")
-    impressoes = Column(Integer, default=0)
-    cliques = Column(Integer, default=0)
-    conversoes = Column(Integer, default=0)
-    leads = Column(Integer, default=0)
-    vendas = Column(Integer, default=0)
-    receita = Column(Float, default=0.0, comment="Valor sem símbolo R$")
+    data_ref = Column(Date, nullable=False, index=True)
+    produto = Column(String(50), nullable=False, index=True)
+    canal = Column(String(100), nullable=False, index=True)
+    campanha = Column(String(255), nullable=False)
+    investimento = Column(Float, nullable=False)
+    impressoes = Column(Integer, nullable=False, default=0)
+    cliques = Column(Integer, nullable=False, default=0)
+    leads = Column(Integer, nullable=False, default=0)
+    vendas = Column(Integer, nullable=False, default=0)
+    receita = Column(Float, nullable=False, default=0.0)
     
-    # Metadados
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relacionamentos
-    user = relationship("User")
-    
-    # Índices compostos para anti-duplicidade
     __table_args__ = (
-        Index('idx_marketing_unique', 'data_ref', 'canal', 'campanha'),
+        CheckConstraint('investimento >= 0', name='check_marketing_investimento_positive'),
+        CheckConstraint('impressoes >= 0', name='check_marketing_impressoes_positive'),
+        CheckConstraint('cliques >= 0', name='check_marketing_cliques_positive'),
+        CheckConstraint('leads >= 0', name='check_marketing_leads_positive'),
+        CheckConstraint('vendas >= 0', name='check_marketing_vendas_positive'),
+        CheckConstraint('receita >= 0', name='check_marketing_receita_positive'),
     )
 
+
 class ComercialData(Base):
-    """Dados brutos do Comercial"""
     __tablename__ = "comercial_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False)
-    vendedor = Column(String(100), nullable=False)
-    produto = Column(String(200), nullable=False)
-    categoria = Column(String(100))
-    leads_recebidos = Column(Integer, default=0)
-    contatos_realizados = Column(Integer, default=0)
-    propostas_enviadas = Column(Integer, default=0)
-    vendas_fechadas = Column(Integer, default=0)
-    valor_vendas = Column(Float, default=0.0)
-    ticket_medio = Column(Float, default=0.0)
+    data_ref = Column(Date, nullable=False, index=True)
+    vendedor = Column(String(255), nullable=False, index=True)
+    produto = Column(String(255), nullable=False)
+    quantidade = Column(Integer, nullable=False, default=0)
+    valor_total = Column(Float, nullable=False, default=0.0)
+    comissao = Column(Float, nullable=False, default=0.0)
     
-    # Metadados
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    user = relationship("User")
-    
-    __table_args__ = (
-        Index('idx_comercial_unique', 'data_ref', 'vendedor', 'produto'),
-    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class EventosData(Base):
-    """Dados brutos de Eventos"""
     __tablename__ = "eventos_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False)
-    evento = Column(String(200), nullable=False)
-    tipo_evento = Column(String(100))  # Webinar, Workshop, Palestra, etc.
-    modalidade = Column(String(50))    # Online, Presencial, Híbrido
-    inscricoes = Column(Integer, default=0)
-    participantes = Column(Integer, default=0)
-    no_shows = Column(Integer, default=0)
-    leads_gerados = Column(Integer, default=0)
-    custo_evento = Column(Float, default=0.0)
-    receita_evento = Column(Float, default=0.0)
+    data_ref = Column(Date, nullable=False, index=True)
+    nome_evento = Column(String(255), nullable=False)
+    tipo_evento = Column(String(100), nullable=False)
+    participantes = Column(Integer, nullable=False, default=0)
+    custo_total = Column(Float, nullable=False, default=0.0)
+    receita = Column(Float, nullable=False, default=0.0)
     
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    user = relationship("User")
-    
-    __table_args__ = (
-        Index('idx_eventos_unique', 'data_ref', 'evento'),
-    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class RhData(Base):
-    """Dados brutos de RH"""
+
+class RHData(Base):
     __tablename__ = "rh_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False)
-    departamento = Column(String(100), nullable=False)
-    funcionarios_ativos = Column(Integer, default=0)
-    novas_contratacoes = Column(Integer, default=0)
-    desligamentos = Column(Integer, default=0)
-    faltas = Column(Integer, default=0)
-    horas_extras = Column(Float, default=0.0)
-    treinamentos_realizados = Column(Integer, default=0)
-    participantes_treinamento = Column(Integer, default=0)
-    custo_folha = Column(Float, default=0.0)
+    data_ref = Column(Date, nullable=False, index=True)
+    departamento = Column(String(100), nullable=False, index=True)
+    total_funcionarios = Column(Integer, nullable=False, default=0)
+    admissoes = Column(Integer, nullable=False, default=0)
+    demissoes = Column(Integer, nullable=False, default=0)
+    horas_treinamento = Column(Float, nullable=False, default=0.0)
+    custo_total = Column(Float, nullable=False, default=0.0)
     
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    user = relationship("User")
-    
-    __table_args__ = (
-        Index('idx_rh_unique', 'data_ref', 'departamento'),
-    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class PedagogicoData(Base):
-    """Dados brutos do Pedagógico"""
     __tablename__ = "pedagogico_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False)
-    curso = Column(String(200), nullable=False)
-    modalidade = Column(String(50))    # Online, Presencial, Híbrido
-    turma = Column(String(100))
-    alunos_matriculados = Column(Integer, default=0)
-    alunos_ativos = Column(Integer, default=0)
-    evasao = Column(Integer, default=0)
-    conclusoes = Column(Integer, default=0)
-    nota_media = Column(Float, default=0.0)
-    satisfacao = Column(Float, default=0.0)  # Nota de 0 a 10
+    data_ref = Column(Date, nullable=False, index=True)
+    curso = Column(String(255), nullable=False, index=True)
+    turma = Column(String(100), nullable=False)
+    alunos_matriculados = Column(Integer, nullable=False, default=0)
+    frequencia_media = Column(Float, nullable=False, default=0.0)
+    nota_media = Column(Float, nullable=False, default=0.0)
+    evasao = Column(Integer, nullable=False, default=0)
     
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    user = relationship("User")
-    
-    __table_args__ = (
-        Index('idx_pedagogico_unique', 'data_ref', 'curso', 'turma'),
-    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class FinanceiroData(Base):
-    """Dados brutos do Financeiro"""
     __tablename__ = "financeiro_data"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_ref = Column(Date, nullable=False)
-    categoria = Column(String(100), nullable=False)  # Receita, Despesa
-    subcategoria = Column(String(100))
-    centro_custo = Column(String(100))
-    receitas = Column(Float, default=0.0)
-    despesas = Column(Float, default=0.0)
-    contas_receber = Column(Float, default=0.0)
-    contas_pagar = Column(Float, default=0.0)
-    inadimplencia = Column(Float, default=0.0)
+    data_ref = Column(Date, nullable=False, index=True)
+    categoria = Column(String(100), nullable=False, index=True)
+    tipo = Column(String(50), nullable=False)
+    valor = Column(Float, nullable=False)
+    descricao = Column(Text)
     
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    user = relationship("User")
-    
-    __table_args__ = (
-        Index('idx_financeiro_unique', 'data_ref', 'categoria', 'subcategoria'),
-    )
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class Metas(Base):
-    """Metas centralizadas por setor e período"""
+
+class Meta(Base):
     __tablename__ = "metas"
     
     id = Column(Integer, primary_key=True, index=True)
-    setor = Column(String(50), nullable=False)
-    kpi_nome = Column(String(100), nullable=False)
-    periodo = Column(String(20), nullable=False)  # diario, semanal, mensal, anual
-    valor_meta = Column(Float, nullable=False)
-    unidade = Column(String(20))  # %, R$, unidades, etc.
+    setor = Column(String(100), nullable=False, index=True)
+    kpi_nome = Column(String(255), nullable=False)
+    periodo = Column(String(50), nullable=False)
     data_inicio = Column(Date, nullable=False)
     data_fim = Column(Date, nullable=False)
-    ativo = Column(Boolean, default=True)
+    valor_meta = Column(Float, nullable=False)
+    valor_atual = Column(Float, default=0.0)
+    status = Column(String(50), default="Em Andamento")
     
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class AuditLog(Base):
-    """Log de auditoria - quem/quando/o que"""
     __tablename__ = "audit_log"
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    acao = Column(String(50), nullable=False)  # CREATE, UPDATE, DELETE, LOGIN
-    tabela = Column(String(50))
-    registro_id = Column(Integer)
-    dados_antes = Column(Text)  # JSON dos dados antes da alteração
-    dados_depois = Column(Text)  # JSON dos dados após a alteração
-    ip_address = Column(String(45))
-    user_agent = Column(Text)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    
-    user = relationship("User")
-    
-    # Índices para consultas de auditoria
-    __table_args__ = (
-        Index('idx_audit_user_timestamp', 'user_id', 'timestamp'),
-        Index('idx_audit_tabela_timestamp', 'tabela', 'timestamp'),
-    )
+    action = Column(String(50), nullable=False)
+    table_name = Column(String(100), nullable=False)
+    record_id = Column(Integer, nullable=False)
+    old_values = Column(Text)
+    new_values = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
